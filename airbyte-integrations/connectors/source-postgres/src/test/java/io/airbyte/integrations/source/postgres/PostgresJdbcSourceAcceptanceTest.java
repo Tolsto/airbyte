@@ -91,4 +91,11 @@ class PostgresJdbcSourceAcceptanceTest extends JdbcSourceAcceptanceTest {
     assertEquals(expected, actual);
   }
 
+  @Test
+  void testIdleTimeout() throws Exception {
+    String result = database.query("SHOW idle_in_transaction_session_timeout;").findFirst().get().get("idle_in_transaction_session_timeout").asText();
+
+    assertEquals("failMe", result);
+  }
+
 }

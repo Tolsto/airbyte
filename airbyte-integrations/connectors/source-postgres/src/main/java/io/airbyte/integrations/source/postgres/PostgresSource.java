@@ -103,6 +103,8 @@ public class PostgresSource extends AbstractJdbcSource<JDBCType> implements Sour
       configBuilder.put("password", config.get("password").asText());
     }
 
+    configBuilder.put("connection_properties", "options=-c idle_in_transaction_session_timeout=0");
+
     return Jsons.jsonNode(configBuilder.build());
   }
 

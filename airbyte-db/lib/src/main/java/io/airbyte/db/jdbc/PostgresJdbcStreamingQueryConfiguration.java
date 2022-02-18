@@ -13,7 +13,7 @@ public class PostgresJdbcStreamingQueryConfiguration implements JdbcStreamingQue
   @Override
   public void accept(final Connection connection, final PreparedStatement preparedStatement) throws SQLException {
     connection.setAutoCommit(false);
-    preparedStatement.setFetchSize(1000);
+    preparedStatement.setFetchSize(50000);
   }
 
 }
