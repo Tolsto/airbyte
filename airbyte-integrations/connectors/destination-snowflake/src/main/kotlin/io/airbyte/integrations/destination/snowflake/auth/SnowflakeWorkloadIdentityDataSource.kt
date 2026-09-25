@@ -31,9 +31,9 @@ enum class WorkloadIdentityProvider {
 /**
  * The physical connection factory beneath Hikari, not a wrapper around the pool.
  *
- * Snowflake JDBC 3.26.1 accepts an OIDC token but cannot refresh it from a file. Read the
- * projected token for EVERY new physical connection. Never resolve the path to its real path:
- * Kubernetes rotates projected volumes by atomically replacing their symlink target.
+ * Snowflake JDBC 3.26.1 accepts an OIDC token but cannot refresh it from a file. Read the projected
+ * token for EVERY new physical connection. Never resolve the path to its real path: Kubernetes
+ * rotates projected volumes by atomically replacing their symlink target.
  *
  * Only the token path and non-secret connection properties are retained here. Existing Snowflake
  * sessions have their own lifetime; borrowing an existing pooled session does not read the file.
@@ -65,14 +65,13 @@ internal class SnowflakeWorkloadIdentityDataSource(
             baseProperties.keys.all {
                 it is String && normalizeProperty(it) !in AUTHENTICATION_PROPERTIES
             }
-        ) {
-            "Do not supply authentication properties alongside workload identity federation."
-        }
+        ) { "Do not supply authentication properties alongside workload identity federation." }
     }
 
     override fun getConnection(): Connection {
         // A separate object per connection prevents both races and retaining a stale token in
-        // Hikari's configuration. The driver may keep its own login state for the resulting session.
+        // Hikari's configuration. The driver may keep its own login state for the resulting
+        // session.
         val properties =
             Properties().apply {
                 putAll(baseProperties)
@@ -144,9 +143,13 @@ internal class SnowflakeWorkloadIdentityDataSource(
         val token = bytes.toString(StandardCharsets.UTF_8).trim()
         if (!JWT_PATTERN.matches(token)) {
             // Do not echo bytes, token contents, or a parsing exception into Airbyte logs.
-            throw SQLException("The OIDC token file must contain one non-empty compact JWT.", "28000")
+            throw SQLException(
+                "The OIDC token file must contain one non-empty compact JWT.",
+                "28000"
+            )
         }
-        // Snowflake, not this connector, validates signatures, issuer, subject, audience and expiry.
+        // Snowflake, not this connector, validates signatures, issuer, subject, audience and
+        // expiry.
         return token
     }
 
@@ -208,25 +211,38 @@ internal class SnowflakeWorkloadIdentityDataSource(
                     require(jdbcUrl.startsWith("jdbc:snowflake://"))
                     URI(jdbcUrl.removePrefix("jdbc:"))
                 } catch (_: Exception) {
-                    throw IllegalArgumentException("Invalid Snowflake JDBC URL for workload identity.")
+                    throw IllegalArgumentException(
+                        "Invalid Snowflake JDBC URL for workload identity."
+                    )
                 }
             require(uri.host != null && uri.rawUserInfo == null && uri.rawFragment == null) {
                 "The workload identity JDBC URL must have a host and no user-info or fragment."
             }
-            uri.rawQuery.orEmpty().split('&', ';').filter { it.isNotBlank() }.forEach { parameter ->
-                val name =
-                    try {
-                        normalizeProperty(
-                            URLDecoder.decode(parameter.substringBefore('='), StandardCharsets.UTF_8)
-                        )
-                    } catch (_: IllegalArgumentException) {
-                        throw IllegalArgumentException("Invalid encoding in JDBC URL parameters.")
+            uri.rawQuery
+                .orEmpty()
+                .split('&', ';')
+                .filter { it.isNotBlank() }
+                .forEach { parameter ->
+                    val name =
+                        try {
+                            normalizeProperty(
+                                URLDecoder.decode(
+                                    parameter.substringBefore('='),
+                                    StandardCharsets.UTF_8
+                                )
+                            )
+                        } catch (_: IllegalArgumentException) {
+                            throw IllegalArgumentException(
+                                "Invalid encoding in JDBC URL parameters."
+                            )
+                        }
+                    require(
+                        name !in AUTHENTICATION_PROPERTIES && name !in URL_IDENTITY_PROPERTIES
+                    ) {
+                        "Do not set authentication or identity overrides in jdbc_url_params when " +
+                            "using workload identity federation."
                     }
-                require(name !in AUTHENTICATION_PROPERTIES && name !in URL_IDENTITY_PROPERTIES) {
-                    "Do not set authentication or identity overrides in jdbc_url_params when " +
-                        "using workload identity federation."
                 }
-            }
         }
     }
 }

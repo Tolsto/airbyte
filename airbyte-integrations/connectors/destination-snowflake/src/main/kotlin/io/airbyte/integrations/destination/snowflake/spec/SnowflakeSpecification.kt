@@ -220,7 +220,8 @@ class WorkloadIdentityAuthSpecification(
     )
     @get:JsonProperty("token_file_path")
     @get:JsonSchemaInject(
-        json = """{"order": 1, "examples": ["/var/run/secrets/snowflake/token"], "pattern": "^/.*"}"""
+        json =
+            """{"order": 1, "examples": ["/var/run/secrets/snowflake/token"], "pattern": "^/.*"}"""
     )
     val tokenFilePath: String? = null,
     @get:JsonSchemaTitle("Microsoft Entra Resource")

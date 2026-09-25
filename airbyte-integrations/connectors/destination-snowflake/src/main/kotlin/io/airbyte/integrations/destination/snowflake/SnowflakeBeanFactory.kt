@@ -213,7 +213,8 @@ class SnowflakeBeanFactory {
                         driver = SnowflakeDriver(),
                     )
             } catch (e: IllegalArgumentException) {
-                // The data source's validation messages never include JDBC values or token contents.
+                // The data source's validation messages never include JDBC values or token
+                // contents.
                 throw ConfigErrorException(e.message ?: "Invalid workload identity configuration.")
             }
         }

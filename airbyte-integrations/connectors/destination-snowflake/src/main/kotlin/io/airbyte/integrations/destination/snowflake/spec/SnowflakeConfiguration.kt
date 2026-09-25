@@ -109,11 +109,15 @@ class SnowflakeConfigurationFactory :
     ): WorkloadIdentityAuthConfiguration {
         val provider =
             spec.workloadIdentityProvider
-                ?: throw ConfigErrorException("workload_identity_provider is required for workload identity federation.")
+                ?: throw ConfigErrorException(
+                    "workload_identity_provider is required for workload identity federation."
+                )
         val tokenFilePath = spec.tokenFilePath?.takeUnless { it.isBlank() }
         if (provider == WorkloadIdentityProvider.OIDC) {
             if (tokenFilePath == null) {
-                throw ConfigErrorException("token_file_path is required for OIDC workload identity federation.")
+                throw ConfigErrorException(
+                    "token_file_path is required for OIDC workload identity federation."
+                )
             }
             val absolute =
                 try {
@@ -122,17 +126,24 @@ class SnowflakeConfigurationFactory :
                     false
                 }
             if (!absolute) {
-                throw ConfigErrorException("token_file_path must be a valid absolute path inside the connector container.")
+                throw ConfigErrorException(
+                    "token_file_path must be a valid absolute path inside the connector container."
+                )
             }
         } else if (tokenFilePath != null) {
-            throw ConfigErrorException("token_file_path is only supported with the OIDC workload identity provider.")
+            throw ConfigErrorException(
+                "token_file_path is only supported with the OIDC workload identity provider."
+            )
         }
         if (spec.entraResource != null) {
             if (provider != WorkloadIdentityProvider.AZURE || spec.entraResource.isBlank()) {
-                throw ConfigErrorException("entra_resource must be non-empty and is only supported with the AZURE workload identity provider.")
+                throw ConfigErrorException(
+                    "entra_resource must be non-empty and is only supported with the AZURE workload identity provider."
+                )
             }
         }
-        // Validate the configuration without reading credentials or contacting an identity provider.
+        // Validate the configuration without reading credentials or contacting an identity
+        // provider.
         return WorkloadIdentityAuthConfiguration(provider, tokenFilePath, spec.entraResource)
     }
 }
