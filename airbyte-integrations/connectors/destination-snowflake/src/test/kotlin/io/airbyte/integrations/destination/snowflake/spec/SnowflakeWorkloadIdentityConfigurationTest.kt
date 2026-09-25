@@ -62,7 +62,15 @@ internal class SnowflakeWorkloadIdentityConfigurationTest {
         listOf("Workload Identity Federation", "Key Pair Authentication", "Username and Password",
             "workload_identity_provider", "token_file_path", "entra_resource", "AWS", "AZURE", "GCP", "OIDC"
         ).forEach { assertTrue(json.contains(it), "Generated schema is missing $it") }
-        val wifProperties = schema.findValues("properties").first { it.has("workload_identity_provider") }
+        // findValues("properties") stops descending when it finds the root properties object.
+        val credentialOptions = schema.path("properties").path("credentials").path("oneOf")
+        assertTrue(credentialOptions.isArray)
+        val wifProperties =
+            credentialOptions.map { it.path("properties") }.single {
+                it.has("workload_identity_provider")
+            }
+        assertTrue(wifProperties.has("token_file_path"))
+        assertTrue(wifProperties.has("entra_resource"))
         assertFalse(wifProperties.has("password"))
         assertFalse(wifProperties.has("private_key"))
         assertFalse(wifProperties.has("token"))
