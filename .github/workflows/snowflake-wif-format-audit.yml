@@ -1,64 +1,58 @@
-name: Snowflake WIF Format Audit
+name: Snowflake WIF CI Diagnostics
 
 on:
   push:
     branches: [automation/snowflake-wif-format-audit]
 
 permissions:
-  contents: write
+  contents: read
+  actions: read
+  checks: read
 
 jobs:
-  format:
+  diagnostics:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/github-script@v7
         with:
-          ref: ff20ab570075c4b1b52f5087a40045f7cf3b3b0d
-          fetch-depth: 1
-          sparse-checkout: |
-            airbyte-integrations/connectors/destination-snowflake
-            tools/gradle/codestyle
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-      - name: Apply the repository's pinned Kotlin formatter
-        shell: bash
-        run: |
-          set -euo pipefail
-          git fetch --depth=1 origin 61e148e0e304ff5edc043040a4d078198e45fd34
-          git diff --name-only 61e148e0e304ff5edc043040a4d078198e45fd34 ff20ab570075c4b1b52f5087a40045f7cf3b3b0d -- 'airbyte-integrations/connectors/destination-snowflake/*.kt' 'airbyte-integrations/connectors/destination-snowflake/**/*.kt' > /tmp/changed-kotlin.txt
-          test -s /tmp/changed-kotlin.txt
-          curl --fail --location --retry 3 https://repo.maven.apache.org/maven2/com/facebook/ktfmt/0.39/ktfmt-0.39-jar-with-dependencies.jar --output /tmp/ktfmt.jar
-          mapfile -t files < /tmp/changed-kotlin.txt
-          java -jar /tmp/ktfmt.jar --kotlinlang-style "${files[@]}"
-          mkdir -p audit
-          git diff --check
-          git diff --stat > audit/summary.txt
-          git diff --binary > audit/format.patch
-          while IFS= read -r file; do
-            mkdir -p "audit/$(dirname "$file")"
-            cp "$file" "audit/$file"
-          done < /tmp/changed-kotlin.txt
-          cp /tmp/changed-kotlin.txt audit/changed-kotlin.txt
-          cat audit/summary.txt
-          java -jar /tmp/ktfmt.jar --kotlinlang-style "${files[@]}"
-          git diff --binary > /tmp/second-pass.patch
-          cmp audit/format.patch /tmp/second-pass.patch
-      - name: Publish formatting-only commit on an isolated output branch
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = ff20ab570075c4b1b52f5087a40045f7cf3b3b0d
-          mapfile -t files < /tmp/changed-kotlin.txt
-          git add -- "${files[@]}"
-          git diff --cached --check
-          git -c user.name=Tolsto -c user.email=20240901+Tolsto@users.noreply.github.com commit -m 'style(destination-snowflake): apply repository ktfmt to workload identity code'
-          git rev-parse HEAD | tee audit/formatted-commit.txt
-          git push origin HEAD:refs/heads/automation/snowflake-wif-formatted-output
+          script: |
+            const fs = require('fs');
+            fs.mkdirSync('diagnostics', {recursive: true});
+            const repo = {owner: 'airbytehq', repo: 'airbyte'};
+            const save = (name, value) => fs.writeFileSync(`diagnostics/${name}`, typeof value === 'string' ? value : JSON.stringify(value, null, 2));
+            for (const id of [108275360816, 108275273545]) {
+              try {
+                const result = await github.paginate(github.rest.checks.listAnnotations, {...repo, check_run_id: id, per_page: 100});
+                save(`${id}-annotations.json`, result);
+              } catch (error) {
+                save(`${id}-annotations-error.txt`, `${error.status}: ${error.message}`);
+              }
+              try {
+                const result = await github.rest.actions.downloadJobLogsForWorkflowRun({...repo, job_id: id});
+                const text = typeof result.data === 'string' ? result.data : Buffer.from(result.data).toString('utf8');
+                const lines = text.split('\n');
+                const selected = new Set();
+                for (let i = 0; i < lines.length; i++) {
+                  if (/FAILED|FAILURE|Exception|Caused by|error|BUILD SUCCESSFUL|tests completed|secrets\//i.test(lines[i])) {
+                    for (let j = Math.max(0, i - 2); j <= Math.min(lines.length - 1, i + 6); j++) selected.add(j);
+                  }
+                }
+                const output = [...selected].sort((a, b) => a - b).map(i => `${i + 1}: ${lines[i]}`).join('\n');
+                save(`${id}-diagnostic-lines.txt`, output.slice(-200000));
+              } catch (error) {
+                save(`${id}-logs-error.txt`, `${error.status}: ${error.message}`);
+              }
+            }
+            try {
+              const checks = await github.paginate(github.rest.checks.listForRef, {...repo, ref: 'ff20ab570075c4b1b52f5087a40045f7cf3b3b0d', per_page: 100});
+              save('checks.json', checks.map(c => ({id: c.id, name: c.name, conclusion: c.conclusion, output: c.output})));
+            } catch (error) {
+              save('checks-error.txt', `${error.status}: ${error.message}`);
+            }
+            core.info(fs.readdirSync('diagnostics').join('\n'));
       - uses: actions/upload-artifact@v4
         with:
-          name: snowflake-wif-formatted-files
-          path: audit/
+          name: snowflake-wif-ci-diagnostics
+          path: diagnostics/
           retention-days: 1
