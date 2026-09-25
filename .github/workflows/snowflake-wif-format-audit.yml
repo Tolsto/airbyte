@@ -5,7 +5,7 @@ on:
     branches: [automation/snowflake-wif-format-audit]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   format:
@@ -42,11 +42,21 @@ jobs:
             cp "$file" "audit/$file"
           done < /tmp/changed-kotlin.txt
           cp /tmp/changed-kotlin.txt audit/changed-kotlin.txt
-          cp /tmp/ktfmt.jar audit/ktfmt-0.39.jar
           cat audit/summary.txt
           java -jar /tmp/ktfmt.jar --kotlinlang-style "${files[@]}"
           git diff --binary > /tmp/second-pass.patch
           cmp audit/format.patch /tmp/second-pass.patch
+      - name: Publish formatting-only commit on an isolated output branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = ff20ab570075c4b1b52f5087a40045f7cf3b3b0d
+          mapfile -t files < /tmp/changed-kotlin.txt
+          git add -- "${files[@]}"
+          git diff --cached --check
+          git -c user.name=Tolsto -c user.email=20240901+Tolsto@users.noreply.github.com commit -m 'style(destination-snowflake): apply repository ktfmt to workload identity code'
+          git rev-parse HEAD | tee audit/formatted-commit.txt
+          git push origin HEAD:refs/heads/automation/snowflake-wif-formatted-output
       - uses: actions/upload-artifact@v4
         with:
           name: snowflake-wif-formatted-files
