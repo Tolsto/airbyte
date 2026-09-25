@@ -1,65 +1,72 @@
-name: Snowflake WIF Snapshot Publication
+name: Snowflake WIF Final CI Diagnostics
 
 on:
   push:
     branches: [automation/snowflake-wif-format-audit]
 
 permissions:
-  contents: write
+  contents: read
   actions: read
+  checks: read
 
 jobs:
-  publish:
+  diagnostics:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/github-script@v7
         with:
-          ref: f89bcfefea9f1bd566ae81d3dfa5c805268d9a8c
-          fetch-depth: 1
-      - uses: actions/download-artifact@v4
+          script: |
+            const fs = require('fs');
+            fs.mkdirSync('diagnostics', {recursive: true});
+            const repo = {owner: 'airbytehq', repo: 'airbyte'};
+            const sha = '5d60e567adf4fa539c3414cfa4fd6d8aaa56c35c';
+            const save = (name, value) => fs.writeFileSync(`diagnostics/${name}`, typeof value === 'string' ? value : JSON.stringify(value, null, 2));
+            for (const runId of [36199298754, 36199298713]) {
+              let jobs;
+              for (let attempt = 0; attempt < 32; attempt++) {
+                const run = await github.rest.actions.getWorkflowRun({...repo, run_id: runId});
+                if (run.data.head_sha !== sha) throw new Error('Unexpected workflow head');
+                if (run.data.status === 'completed') {
+                  jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {...repo, run_id: runId, per_page: 100});
+                  break;
+                }
+                await new Promise(resolve => setTimeout(resolve, 15000));
+              }
+              if (!jobs) throw new Error(`Workflow ${runId} did not complete within diagnostic window`);
+              save(`${runId}-jobs.json`, jobs.map(j => ({id: j.id, name: j.name, conclusion: j.conclusion, steps: j.steps})));
+              for (const job of jobs.filter(j => j.conclusion === 'failure')) {
+                try {
+                  const result = await github.rest.actions.downloadJobLogsForWorkflowRun({...repo, job_id: job.id});
+                  const text = typeof result.data === 'string' ? result.data : Buffer.from(result.data).toString('utf8');
+                  const lines = text.split('\n');
+                  const failureHeaders = lines.filter(l => / > .*FAILED/.test(l));
+                  const missingFiles = [...new Set(lines.filter(l => /NoSuchFileException|FileNotFoundException/.test(l)).map(l => l.replace(/^\S+\s+/, '').trim()))];
+                  save(`${job.id}-summary.json`, {
+                    head_sha: sha,
+                    name: job.name,
+                    conclusion: job.conclusion,
+                    failureHeaders,
+                    missingFiles,
+                    testCounts: lines.filter(l => /tests completed|tests,|BUILD SUCCESSFUL|BUILD FAILED/.test(l)),
+                    specLines: lines.filter(l => /SnowflakeSpecTest|spec snapshot|semantic diff|generated spec/.test(l)),
+                    credentialErrors: lines.filter(l => /GCP_PROD_DB_ACCESS_CREDENTIALS|environment variable is not set/.test(l)),
+                  });
+                  const selected = new Set();
+                  for (let i = 0; i < lines.length; i++) {
+                    if (/FAILED|FAILURE|Exception|Caused by|error|BUILD SUCCESSFUL|tests completed|SnowflakeSpecTest/i.test(lines[i])) {
+                      for (let j = Math.max(0, i - 1); j <= Math.min(lines.length - 1, i + 3); j++) selected.add(j);
+                    }
+                  }
+                  save(`${job.id}-diagnostic-lines.txt`, [...selected].sort((a,b) => a-b).map(i => `${i+1}: ${lines[i]}`).join('\n').slice(-200000));
+                } catch (error) {
+                  save(`${job.id}-error.txt`, `${error.status}: ${error.message}`);
+                }
+              }
+            }
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: snowflake-wif-spec-verification
-          run-id: 36198741119
-          github-token: ${{ github.token }}
-          path: /tmp/generated-specs
-      - name: Validate and copy generated snapshots
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import hashlib
-          import json
-          import subprocess
-          from pathlib import Path
-          prefix = Path('airbyte-integrations/connectors/destination-snowflake/src/test-integration/resources')
-          expected_hash = '930b3f8839f9ad2f3245ed4b24254b8dfb177753'
-          for filename in ('expected-spec-oss.json', 'expected-spec-cloud.json'):
-              path = prefix / filename
-              data = (Path('/tmp/generated-specs') / path).read_bytes()
-              actual_hash = hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
-              assert actual_hash == expected_hash, (filename, actual_hash)
-              old = json.loads(subprocess.check_output(['git', 'show', f'HEAD:{path}']))
-              new = json.loads(data)
-              variants = new['connectionSpecification']['properties']['credentials']['oneOf']
-              assert len(variants) == 3
-              wif = variants.pop()
-              assert wif['title'] == 'Workload Identity Federation'
-              assert set(wif['properties']) == {'auth_type', 'workload_identity_provider', 'token_file_path', 'entra_resource'}
-              old_variants = old['connectionSpecification']['properties']['credentials']['oneOf']
-              assert variants[1]['description'] == old_variants[1]['description'].replace('key pair authentication instead.', 'key pair authentication or workload identity federation instead.')
-              variants[1]['description'] = old_variants[1]['description']
-              assert new == old, 'Unexpected changes outside the WIF credential schema'
-              path.write_bytes(data)
-          PY
-          git diff --check
-          git diff --stat
-      - name: Publish a snapshots-only commit
-        shell: bash
-        run: |
-          set -euo pipefail
-          git add -- airbyte-integrations/connectors/destination-snowflake/src/test-integration/resources/expected-spec-{oss,cloud}.json
-          test "$(git diff --cached --name-only | wc -l)" -eq 2
-          git -c user.name=Tolsto -c user.email=20240901+Tolsto@users.noreply.github.com commit -m 'fix(destination-snowflake): regenerate WIF specification snapshots'
-          git rev-parse HEAD
-          git push origin HEAD:refs/heads/automation/snowflake-wif-spec-output
+          name: snowflake-wif-final-ci-diagnostics
+          path: diagnostics/
+          retention-days: 1
