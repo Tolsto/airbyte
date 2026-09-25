@@ -1,0 +1,54 @@
+name: Snowflake WIF Format Audit
+
+on:
+  push:
+    branches: [automation/snowflake-wif-format-audit]
+
+permissions:
+  contents: read
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ff20ab570075c4b1b52f5087a40045f7cf3b3b0d
+          fetch-depth: 1
+          sparse-checkout: |
+            airbyte-integrations/connectors/destination-snowflake
+            tools/gradle/codestyle
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Apply the repository's pinned Kotlin formatter
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin 61e148e0e304ff5edc043040a4d078198e45fd34
+          git diff --name-only 61e148e0e304ff5edc043040a4d078198e45fd34 ff20ab570075c4b1b52f5087a40045f7cf3b3b0d -- 'airbyte-integrations/connectors/destination-snowflake/*.kt' 'airbyte-integrations/connectors/destination-snowflake/**/*.kt' > /tmp/changed-kotlin.txt
+          test -s /tmp/changed-kotlin.txt
+          curl --fail --location --retry 3 https://repo.maven.apache.org/maven2/com/facebook/ktfmt/0.39/ktfmt-0.39-jar-with-dependencies.jar --output /tmp/ktfmt.jar
+          mapfile -t files < /tmp/changed-kotlin.txt
+          java -jar /tmp/ktfmt.jar --kotlinlang-style "${files[@]}"
+          mkdir -p audit
+          git diff --check
+          git diff --stat > audit/summary.txt
+          git diff --binary > audit/format.patch
+          while IFS= read -r file; do
+            mkdir -p "audit/$(dirname "$file")"
+            cp "$file" "audit/$file"
+          done < /tmp/changed-kotlin.txt
+          cp /tmp/changed-kotlin.txt audit/changed-kotlin.txt
+          cp /tmp/ktfmt.jar audit/ktfmt-0.39.jar
+          cat audit/summary.txt
+          java -jar /tmp/ktfmt.jar --kotlinlang-style "${files[@]}"
+          git diff --binary > /tmp/second-pass.patch
+          cmp audit/format.patch /tmp/second-pass.patch
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snowflake-wif-formatted-files
+          path: audit/
+          retention-days: 1
